@@ -1,1 +1,1 @@
-mod octree;
+pub mod octree;

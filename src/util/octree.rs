@@ -11,9 +11,9 @@ pub enum VoxelOctreeCreationError {
 /// Specialized octree for storing voxels.
 pub struct VoxelOctree<T> {
     /// Size of the octree.
-    size: usize,
+    pub size: usize,
     /// The root node of the octree.
-    root: Octree<T>,
+    pub root: Octree<T>,
 }
 
 impl<T> VoxelOctree<T> {
@@ -70,7 +70,7 @@ impl<T> VoxelOctree<T> {
     }
 
     /// Get the value at the given position.
-    pub fn get_value(&self, position: Vec3) -> Option<&T> {
+    pub fn get(&self, position: Vec3) -> Option<&T> {
         let mut current_size = self.size;
         let mut current_node = &self.root;
         let mut current_position = position;
@@ -167,10 +167,10 @@ mod tests {
         octree.insert(Vec3::new(1.0, 8.0, 0.0), 4);
         octree.insert(Vec3::new(4.0, 7.0, 3.0), 5);
         
-        assert_eq!(octree.get_value(Vec3::new(0.0, 0.0, 0.0)), Some(&1));
-        assert_eq!(octree.get_value(Vec3::new(1.0, 0.0, 0.0)), Some(&2));
-        assert_eq!(octree.get_value(Vec3::new(0.0, 1.0, 0.0)), Some(&3));
-        assert_eq!(octree.get_value(Vec3::new(1.0, 8.0, 0.0)), Some(&4));
-        assert_eq!(octree.get_value(Vec3::new(4.0, 7.0, 3.0)), Some(&5));
+        assert_eq!(octree.get(Vec3::new(0.0, 0.0, 0.0)), Some(&1));
+        assert_eq!(octree.get(Vec3::new(1.0, 0.0, 0.0)), Some(&2));
+        assert_eq!(octree.get(Vec3::new(0.0, 1.0, 0.0)), Some(&3));
+        assert_eq!(octree.get(Vec3::new(1.0, 8.0, 0.0)), Some(&4));
+        assert_eq!(octree.get(Vec3::new(4.0, 7.0, 3.0)), Some(&5));
     }
 }
