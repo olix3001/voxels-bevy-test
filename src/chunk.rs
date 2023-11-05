@@ -1,7 +1,9 @@
 use std::hash::Hash;
 
-use bevy::{prelude::*, render::{mesh::{VertexAttributeValues, Indices}, render_resource::PrimitiveTopology}, utils::HashMap};
+use bevy::{prelude::*, render::{mesh::{VertexAttributeValues, Indices}, render_resource::PrimitiveTopology, primitives::Aabb}, utils::HashMap};
 use crate::{util::{octree::VoxelOctree, Face}, voxel::{Voxel, OptionalVoxel}};
+
+pub mod generator;
 
 pub const CHUNK_SIZE: usize = 16;
 
@@ -14,12 +16,12 @@ impl Into<Vec3> for ChunkPos {
 }
 impl From<Vec3> for ChunkPos {
     fn from(v: Vec3) -> Self {
-        ChunkPos(v / CHUNK_SIZE as f32)
+        ChunkPos((v / CHUNK_SIZE as f32).floor())
     }
 }
 impl Eq for ChunkPos {}
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Chunk {
     /// Position of the chunk in world space (in chunk units)
     position: ChunkPos,
@@ -40,9 +42,17 @@ impl Hash for ChunkPos {
 }
 
 impl Chunk {
+
     pub fn new(position: Vec3) -> Self {
         Chunk {
             position: ChunkPos(position),
+            octree: VoxelOctree::new(CHUNK_SIZE).unwrap(),
+            opaque_faces: 0,
+        }
+    }
+    pub fn at(position: ChunkPos) -> Self {
+        Chunk {
+            position,
             octree: VoxelOctree::new(CHUNK_SIZE).unwrap(),
             opaque_faces: 0,
         }
@@ -52,13 +62,13 @@ impl Chunk {
         self.octree.insert(position, voxel);
     }
 
-    pub fn get(&self, position: Vec3) -> Option<&Voxel> {
+    pub fn get(&self, position: Vec3) -> Option<Voxel> {
         self.octree.get(position)
     }
 
     /// Recalculates which faces are fully opaque for later use in culling.
     pub fn recalculate_opaque_faces(&mut self) {
-        let mut opaque_faces = 0;
+        let mut opaque_faces = 0b00000000;
         // Top and bottom faces
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
@@ -110,7 +120,7 @@ impl Chunk {
 
     /// Check whether the given face is opaque.
     pub fn is_face_opaque(&self, face: Face) -> bool {
-        self.opaque_faces & (1 << face.as_num()) != 0
+        (self.opaque_faces >> face.as_num()) & 0b1 == 1
     }
 
     /// Generates a mesh for the chunk. Detail level of 1 means every voxel will be displayed. 
@@ -198,8 +208,41 @@ impl Chunk {
         }
         chunk
     }
+
+    /// Converts inner position to world position
+    pub fn inner_to_world_position(&self, position: Vec3) -> Vec3 {
+        let converted: Vec3 = self.position.clone().into();
+        converted + position
+    }
+
+    /// Converts world position to inner position
+    pub fn world_to_inner_position(&self, position: Vec3) -> Vec3 {
+        let converted: Vec3 = self.position.clone().into();
+        position - converted
+    }
+
+    /// Gets neighbor position.
+    pub fn get_neighbor_position(&self, face: Face) -> ChunkPos {
+        let mut position = self.position.0;
+        match face {
+            Face::Top => position += Vec3::new(0.0, 1.0, 0.0),
+            Face::Bottom => position += Vec3::new(0.0, -1.0, 0.0),
+            Face::Left => position += Vec3::new(-1.0, 0.0, 0.0),
+            Face::Right => position += Vec3::new(1.0, 0.0, 0.0),
+            Face::Front => position += Vec3::new(0.0, 0.0, 1.0),
+            Face::Back => position += Vec3::new(0.0, 0.0, -1.0),
+        }
+        ChunkPos(position)
+    }
+
+    pub fn get_aabb(&self) -> Aabb {
+        let min = self.position.0;
+        let max = self.position.0 + Vec3::new(CHUNK_SIZE as f32, CHUNK_SIZE as f32, CHUNK_SIZE as f32);
+        Aabb::from_min_max(min, max)
+    }
 }
 
+#[derive(Resource)]
 pub struct ChunksData {
     pub chunks: HashMap<ChunkPos, Entity>
 }
@@ -223,23 +266,29 @@ impl ChunksData {
 
     /// Get the chunk neighbors of the given chunk.
     /// The order is top, bottom, left, right, front, back.
-    pub fn get_neighbors(&self, chunk: ChunkPos) -> [Option<Entity>; 6] {
-        let mut neighbors = [None; 6];
+    pub fn get_neighbors(&self, chunk: &ChunkPos) -> [(Option<Entity>, Face); 6] {
+        let mut neighbors = [(None, Face::Top); 6];
 
         // Top neighbor
-        neighbors[0] = self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, 1.0, 0.0)));
+        neighbors[0] = (self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, 1.0, 0.0))), Face::Top);
         // Bottom neighbor
-        neighbors[1] = self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, -1.0, 0.0)));
+        neighbors[1] = (self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, -1.0, 0.0))), Face::Bottom);
         // Left neighbor
-        neighbors[2] = self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(-1.0, 0.0, 0.0)));
+        neighbors[2] = (self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(-1.0, 0.0, 0.0))), Face::Left);
         // Right neighbor
-        neighbors[3] = self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(1.0, 0.0, 0.0)));
+        neighbors[3] = (self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(1.0, 0.0, 0.0))), Face::Right);
         // Front neighbor
-        neighbors[4] = self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, 0.0, 1.0)));
+        neighbors[4] = (self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, 0.0, 1.0))), Face::Front);
         // Back neighbor
-        neighbors[5] = self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, 0.0, -1.0)));
+        neighbors[5] = (self.get_chunk(ChunkPos::from(chunk.0 + Vec3::new(0.0, 0.0, -1.0))), Face::Back);
 
         neighbors
+    }
+
+    /// Get chunk that contains the given position.
+    pub fn get_chunk_containing(&self, position: Vec3) -> Option<Entity> {
+        let chunk_pos = ChunkPos::from(position);
+        self.get_chunk(chunk_pos)
     }
 }
 
@@ -257,14 +306,14 @@ mod tests {
     fn test_chunk_insert() {
         let mut chunk = Chunk::new(Vec3::new(0.0, 0.0, 0.0));
         chunk.insert(Vec3::new(0.0, 0.0, 0.0), Voxel::opaque());
-        assert_eq!(chunk.get(Vec3::new(0.0, 0.0, 0.0)), Some(&Voxel::opaque()));
+        assert_eq!(chunk.get(Vec3::new(0.0, 0.0, 0.0)), Some(Voxel::opaque()));
     }
 
     #[test]
     fn test_chunk_get() {
         let mut chunk = Chunk::new(Vec3::new(0.0, 0.0, 0.0));
         chunk.insert(Vec3::new(0.0, 0.0, 0.0), Voxel::opaque());
-        assert_eq!(chunk.get(Vec3::new(0.0, 0.0, 0.0)), Some(&Voxel::opaque()));
+        assert_eq!(chunk.get(Vec3::new(0.0, 0.0, 0.0)), Some(Voxel::opaque()));
     }
 
     #[test]
@@ -294,5 +343,22 @@ mod tests {
         let chunk_pos_1 = ChunkPos(Vec3::new(0.0, 0.0, 0.0));
         let chunk_pos_2 = ChunkPos(Vec3::new(0.0, 0.0, 0.0));
         assert_eq!(chunk_pos_1, chunk_pos_2);
+    }
+
+    #[test]
+    fn test_bottom_face_opaque() {
+        let mut chunk = Chunk::new(Vec3::new(0.0, 0.0, 0.0));
+        // Fill bottom face
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                chunk.insert(Vec3::new(x as f32, 0.0, z as f32), Voxel::opaque());
+            }
+        }
+
+        chunk.recalculate_opaque_faces();
+
+        assert!(chunk.is_face_opaque(Face::Bottom));
+        assert!(!chunk.is_face_opaque(Face::Top));
+        assert!(!chunk.is_face_opaque(Face::Left));
     }
 }

@@ -1,4 +1,4 @@
-use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}};
+use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}};
 use flycam::prelude::voxel::Voxel;
 
 pub mod util;
@@ -11,26 +11,8 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>, 
     mut materials: ResMut<Assets<StandardMaterial>>, 
     mut ambient_light: ResMut<AmbientLight>) {
-    // commands.spawn(Camera3dBundle::default());
 
-    let mut chunk = chunk::Chunk::outlined();
-
-    let mesh = chunk.generate_mesh(1);
-    let mesh_handle = meshes.add(mesh.clone());
-    let material_handle = materials.add(StandardMaterial {
-        base_color: Color::rgb(0.2, 0.8, 0.35),
-        perceptual_roughness: 0.1,
-        ..Default::default()
-    });
-
-    commands.spawn(PbrBundle {
-        mesh: mesh_handle,
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        material: material_handle,
-        ..Default::default()
-    });
-
-    // Insert sphere to mark origin
+    // Insert cube to mark origin
     commands.spawn(PbrBundle {
         mesh: meshes.add(Mesh::from(shape::Cube {
             size: 0.1,
@@ -51,6 +33,8 @@ fn main() {
             global: true,
             ..Default::default()
         })
+        .add_plugins((LogDiagnosticsPlugin::default(), FrameTimeDiagnosticsPlugin::default()))
+        .add_plugins(chunk::generator::ChunkGeneratorPlugin::with_flat_world_generator(0))
         .add_plugins(flycam::PlayerPlugin)
         .add_systems(Startup, setup)
         .run();

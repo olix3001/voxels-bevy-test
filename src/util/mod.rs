@@ -1,3 +1,5 @@
+use bevy::prelude::Vec3;
+
 pub mod octree;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,17 @@ impl Face {
             Face::Right => 3,
             Face::Front => 4,
             Face::Back => 5,
+        }
+    }
+
+    pub fn normal(&self) -> Vec3 {
+        match self {
+            Face::Top => Vec3::new(0.0, 1.0, 0.0),
+            Face::Bottom => Vec3::new(0.0, -1.0, 0.0),
+            Face::Left => Vec3::new(-1.0, 0.0, 0.0),
+            Face::Right => Vec3::new(1.0, 0.0, 0.0),
+            Face::Front => Vec3::new(0.0, 0.0, 1.0),
+            Face::Back => Vec3::new(0.0, 0.0, -1.0),
         }
     }
 }

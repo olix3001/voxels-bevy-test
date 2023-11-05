@@ -14,13 +14,13 @@ impl Voxel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OptionalVoxel<'a> {
-    Voxel(&'a Voxel),
+pub enum OptionalVoxel {
+    Voxel(Voxel),
     Empty,
 }
 
-impl<'a> From<Option<&'a Voxel>> for OptionalVoxel<'a> {
-    fn from(voxel: Option<&'a Voxel>) -> Self {
+impl From<Option<Voxel>> for OptionalVoxel {
+    fn from(voxel: Option<Voxel>) -> Self {
         match voxel {
             Some(voxel) => OptionalVoxel::Voxel(voxel),
             None => OptionalVoxel::Empty,
@@ -28,7 +28,7 @@ impl<'a> From<Option<&'a Voxel>> for OptionalVoxel<'a> {
     }
 }
 
-impl<'a> block_mesh::Voxel for OptionalVoxel<'a> {
+impl block_mesh::Voxel for OptionalVoxel {
     fn get_visibility(&self) -> VoxelVisibility {
         match self {
             OptionalVoxel::Voxel(voxel) => voxel.get_visibility(),
@@ -37,7 +37,7 @@ impl<'a> block_mesh::Voxel for OptionalVoxel<'a> {
     }
 }
 
-impl<'a> block_mesh::MergeVoxel for OptionalVoxel<'a> {
+impl block_mesh::MergeVoxel for OptionalVoxel {
     type MergeValue = Self;
 
     fn merge_value(&self) -> Self::MergeValue {
@@ -75,8 +75,8 @@ mod tests {
     #[test]
     fn test_optional_voxel_from_option() {
         let opaque_voxel = super::Voxel::opaque();
-        let voxel = Some(&opaque_voxel);
+        let voxel = Some(opaque_voxel);
         let optional_voxel: OptionalVoxel = voxel.into();
-        assert_eq!(optional_voxel, OptionalVoxel::Voxel(&super::Voxel::opaque()));
+        assert_eq!(optional_voxel, OptionalVoxel::Voxel(super::Voxel::opaque()));
     }
 }

@@ -1,3 +1,5 @@
+use std::sync::{RwLock, Arc};
+
 use bevy::prelude::Vec3;
 
 /// Error that can occur when creating a voxel octree.
@@ -7,16 +9,16 @@ pub enum VoxelOctreeCreationError {
     SizeNotPowerOfTwo,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Specialized octree for storing voxels.
 pub struct VoxelOctree<T> {
     /// Size of the octree.
     pub size: usize,
     /// The root node of the octree.
-    pub root: Octree<T>,
+    pub root: Arc<RwLock<Octree<T>>>,
 }
 
-impl<T> VoxelOctree<T> {
+impl<T: Clone> VoxelOctree<T> {
     /// Create a new octree.
     pub fn new(size: usize) -> Result<Self, VoxelOctreeCreationError> {
         // Ensure that the size is a power of 2.
@@ -26,14 +28,14 @@ impl<T> VoxelOctree<T> {
 
         Ok(VoxelOctree {
             size,
-            root: Octree::new(),
+            root: Arc::new(RwLock::new(Octree::Empty)),
         })
     }
 
     /// Insert a value into the octree at the given position dividing the octree if necessary.
     pub fn insert(&mut self, position: Vec3, value: T) {
         let mut current_size = self.size;
-        let mut current_node = &mut self.root;
+        let mut current_node = &mut *self.root.write().unwrap();
         let mut current_position = position;
 
         while current_size > 1 {
@@ -70,9 +72,9 @@ impl<T> VoxelOctree<T> {
     }
 
     /// Get the value at the given position.
-    pub fn get(&self, position: Vec3) -> Option<&T> {
+    pub fn get(&self, position: Vec3) -> Option<T> {
         let mut current_size = self.size;
-        let mut current_node = &self.root;
+        let mut current_node = &*self.root.read().unwrap();
         let mut current_position = position;
 
         while current_size > 1 {
@@ -98,7 +100,7 @@ impl<T> VoxelOctree<T> {
 
         // Finally get the value of the leaf node.
         if let Octree::Leaf(value) = current_node {
-            Some(value)
+            Some(value.clone())
         } else {
             None
         }
@@ -167,10 +169,10 @@ mod tests {
         octree.insert(Vec3::new(1.0, 8.0, 0.0), 4);
         octree.insert(Vec3::new(4.0, 7.0, 3.0), 5);
         
-        assert_eq!(octree.get(Vec3::new(0.0, 0.0, 0.0)), Some(&1));
-        assert_eq!(octree.get(Vec3::new(1.0, 0.0, 0.0)), Some(&2));
-        assert_eq!(octree.get(Vec3::new(0.0, 1.0, 0.0)), Some(&3));
-        assert_eq!(octree.get(Vec3::new(1.0, 8.0, 0.0)), Some(&4));
-        assert_eq!(octree.get(Vec3::new(4.0, 7.0, 3.0)), Some(&5));
+        assert_eq!(octree.get(Vec3::new(0.0, 0.0, 0.0)), Some(1));
+        assert_eq!(octree.get(Vec3::new(1.0, 0.0, 0.0)), Some(2));
+        assert_eq!(octree.get(Vec3::new(0.0, 1.0, 0.0)), Some(3));
+        assert_eq!(octree.get(Vec3::new(1.0, 8.0, 0.0)), Some(4));
+        assert_eq!(octree.get(Vec3::new(4.0, 7.0, 3.0)), Some(5));
     }
 }
