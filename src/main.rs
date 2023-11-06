@@ -1,10 +1,7 @@
 use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}};
-use flycam::prelude::voxel::Voxel;
 
-pub mod util;
-pub mod chunk;
-pub mod voxel;
 mod flycam;
+pub mod engine;
 
 fn setup(
     mut commands: Commands, 
@@ -34,7 +31,6 @@ fn main() {
             ..Default::default()
         })
         .add_plugins((LogDiagnosticsPlugin::default(), FrameTimeDiagnosticsPlugin::default()))
-        .add_plugins(chunk::generator::ChunkGeneratorPlugin::with_flat_world_generator(0))
         .add_plugins(flycam::PlayerPlugin)
         .add_systems(Startup, setup)
         .run();
