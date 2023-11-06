@@ -24,8 +24,8 @@ impl WorldGeneratorConfig {
     pub fn default_with(generator: impl WorldGenerator + 'static) -> Self {
         Self {
             generator: Arc::new(generator),
-            render_distance: 16,
-            generation_distance: 18,
+            render_distance: 32,
+            generation_distance: 34,
         }
     }
 }
@@ -284,13 +284,19 @@ pub fn unload_invisible_chunks(
             chunk_data.loaded.remove(&chunk.position);
             chunk_data.awaiting_generation.remove(&chunk.position);
             // NOTE: This is temporary
-            chunk_data.meshes.remove(&chunk.position);
+            // chunk_data.meshes.remove(&chunk.position);
         }
     }
 }
 
+pub enum MeshState {
+    /// A mesh that has been loaded from memory
+    Loaded(Handle<Mesh>),
+    /// A mesh that is currently being loaded
+    Loading(Task<Option<Mesh>>),
+}
 #[derive(Component)]
-pub struct MeshingTask(pub ChunkPosition, pub Task<Option<Mesh>>);
+pub struct MeshingTask(pub ChunkPosition, pub MeshState);
 #[derive(Component)]
 pub struct EmptyChunkMarker;
 
@@ -303,7 +309,7 @@ impl MeshingTask {
             let mesh = chunk.build();
             mesh
         });
-        Self(position, task)
+        Self(position, MeshState::Loading(task))
     }
 }
 
@@ -337,13 +343,21 @@ pub fn apply_meshes(
     }
 
     for (entity, mut task) in query.iter_mut() {
-        if let Some(mesh) = block_on(futures_lite::future::poll_once(&mut task.1)) {
-            if mesh.is_none() {
-                commands.entity(entity).remove::<MeshingTask>().try_insert(EmptyChunkMarker);
-                continue;
-            }
-            let mesh = mesh.unwrap();
-            let mesh_handle = meshes.add(mesh);
+        let mesh_handle = match &mut task.1 {
+            MeshState::Loaded(ref handle) => Some(handle.clone()),
+            MeshState::Loading(ref mut mesh_task) => {
+                if let Some(mesh) = block_on(futures_lite::future::poll_once(mesh_task)) {
+                    if mesh.is_none() {
+                        commands.entity(entity).remove::<MeshingTask>().try_insert(EmptyChunkMarker);
+                        continue;
+                    }
+                    let mesh = mesh.unwrap();
+                    let mesh_handle = meshes.add(mesh);
+                    Some(mesh_handle)
+                } else { None }
+            },
+        };
+        if let Some(mesh_handle) = mesh_handle {
             commands.entity(entity).remove::<MeshingTask>().try_insert(PbrBundle {
                 mesh: mesh_handle.clone(),
                 transform: Transform::from_translation(task.0.as_world_position()),

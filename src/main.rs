@@ -1,4 +1,4 @@
-use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}};
+use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}, render::{RenderPlugin, settings::WgpuSettings}};
 use flycam::{prelude::debug::DebugPlugin, MovementSettings};
 
 mod flycam;
