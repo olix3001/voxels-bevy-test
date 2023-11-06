@@ -1,5 +1,5 @@
-use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}};
-use flycam::prelude::debug::DebugPlugin;
+use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}};
+use flycam::{prelude::debug::DebugPlugin, MovementSettings};
 
 mod flycam;
 pub mod engine;
@@ -33,6 +33,10 @@ fn main() {
             ..Default::default()
         })
         .add_plugins(DebugPlugin)
+        .insert_resource(MovementSettings {
+            speed: 15.0,
+            ..Default::default()
+        })
         .add_plugins(flycam::PlayerPlugin)
         .add_plugins(engine::ChunkPlugin)
         .add_systems(Startup, setup)

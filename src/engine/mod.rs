@@ -36,7 +36,7 @@ impl Plugin for ChunkPlugin {
     fn build(&self, app: &mut App) {
         app
             .insert_resource(ChunkData::default())
-            .insert_resource(generator::WorldGeneratorConfig::default_flat())
+            .insert_resource(generator::WorldGeneratorConfig::default_with(generator::PerlinHeightmapWorldGenerator::default()))
             .add_plugins(ChunkGeneratorPlugin);
 
         #[cfg(debug_assertions)]
