@@ -16,8 +16,8 @@ impl WorldGeneratorConfig {
     pub fn default_flat() -> Self {
         Self {
             generator: Arc::new(FlatWorldGenerator::default()),
-            render_distance: 8,
-            generation_distance: 10,
+            render_distance: 32,
+            generation_distance: 34,
         }
     }
 }
@@ -53,6 +53,8 @@ impl Plugin for ChunkGeneratorPlugin {
             begin_chunk_generation.after(update_visible_chunks),
             update_generated_chunks,
             unload_invisible_chunks,
+            schedule_chunk_meshing,
+            apply_meshes,
         ));
 
         #[cfg(debug_assertions)]
@@ -139,6 +141,9 @@ pub fn update_visible_chunks(
     }
 
     // Update visible chunks
+    if already_seen.len() <= 5 && chunk_data.visible.len() > 5 {
+        return;
+    }
     chunk_data.visible = already_seen;
 }
 
@@ -173,7 +178,6 @@ pub fn update_generated_chunks(
     mut commands: Commands,
     mut chunk_data: ResMut<ChunkData>,
     mut query: Query<(Entity, &mut ChunkGenerationTask)>,
-    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for (entity, mut task) in query.iter_mut() {
         if let Some(chunk) = block_on(futures_lite::future::poll_once(&mut task.0)) {
@@ -181,12 +185,7 @@ pub fn update_generated_chunks(
 
             let id = commands.entity(entity)
                 .remove::<ChunkGenerationTask>()
-                .insert(chunk)
-                .insert(PbrBundle {
-                    mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
-                    transform: Transform::from_translation(chunk_pos.as_world_position()),
-                    ..Default::default()
-                }).id();
+                .insert(chunk).id();
 
             chunk_data.loaded.insert(chunk_pos, id);
             chunk_data.awaiting_generation.remove(&chunk_pos);
@@ -204,6 +203,62 @@ pub fn unload_invisible_chunks(
         if !chunk_data.visible.contains(&chunk.position) {
             commands.entity(entity).despawn();
             chunk_data.loaded.remove(&chunk.position);
+            // NOTE: This is temporary
+            chunk_data.meshes.remove(&chunk.position);
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct MeshingTask(pub ChunkPosition, pub Task<Option<Mesh>>);
+#[derive(Component)]
+pub struct EmptyChunkMarker;
+
+impl MeshingTask {
+    pub fn new(chunk: &Chunk) -> Self {
+        let task_pool = AsyncComputeTaskPool::get();
+        let chunk = chunk.clone();
+        let position = chunk.position.clone();
+        let task = task_pool.spawn(async move {
+            let mesh = chunk.build();
+            mesh
+        });
+        Self(position, task)
+    }
+}
+
+/// Schedules meshing for chunks that have been updated
+pub fn schedule_chunk_meshing(
+    mut commands: Commands,
+    mut query: Query<(Entity, &Chunk), (Without<Handle<Mesh>>, Without<MeshingTask>, Without<EmptyChunkMarker>)>,
+) {
+    for (entity, chunk) in query.iter_mut() {
+        let task = MeshingTask::new(chunk);
+        commands.entity(entity).insert(task);
+    } 
+}
+
+/// Updates chunks that have finished meshing
+pub fn apply_meshes(
+    mut commands: Commands,
+    mut chunk_data: ResMut<ChunkData>,
+    mut query: Query<(Entity, &mut MeshingTask)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (entity, mut task) in query.iter_mut() {
+        if let Some(mesh) = block_on(futures_lite::future::poll_once(&mut task.1)) {
+            if mesh.is_none() {
+                commands.entity(entity).remove::<MeshingTask>().insert(EmptyChunkMarker);
+                continue;
+            }
+            let mesh = mesh.unwrap();
+            let mesh_handle = meshes.add(mesh);
+            commands.entity(entity).remove::<MeshingTask>().insert(PbrBundle {
+                mesh: mesh_handle.clone(),
+                transform: Transform::from_translation(task.0.as_world_position()),
+                ..Default::default()
+            });
+            chunk_data.meshes.insert(task.0, mesh_handle);
         }
     }
 }
@@ -219,5 +274,6 @@ pub fn show_chunk_generation_debug_info(
         ui.label(format!("Loaded: {}", chunk_data.loaded.len()));
         ui.label(format!("Awaiting Generation: {}", chunk_data.awaiting_generation.len()));
         ui.label(format!("Visible: {}", chunk_data.visible.len()));
+        ui.label(format!("Meshes: {}", chunk_data.meshes.len()));
     });
 }

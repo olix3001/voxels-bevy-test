@@ -190,19 +190,29 @@ impl Chunk {
         self.visibility_mask & (0b1 << face.as_face_number()) != 0
     }
 
-    pub fn build(&self) -> Mesh {
+    /// Note: This will return None if the chunk is empty
+    pub fn build(&self) -> Option<Mesh> {
         let reader = self.reader();
 
         // Add padding to the chunk data
         let mut chunk_data = vec![Voxel::Empty; ChunkNDShapePadded::SIZE as usize];
+        let mut is_empty = true;
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
                 for z in 0..CHUNK_SIZE {
                     let index = ChunkNDShapePadded::linearize([x as u32 + 1, y as u32 + 1, z as u32 + 1]);
-                    chunk_data[index as usize] = reader.get(x, y, z).clone();
+                    let voxel = reader.get(x, y, z);
+                    if !voxel.is_empty() {
+                        is_empty = false;
+                    }
+                    chunk_data[index as usize] = voxel.clone();
                 }
             }
         }  
+
+        if is_empty {
+            return None;
+        }
 
         // Generate the mesh
         let mut buffer = GreedyQuadsBuffer::new(chunk_data.len());
@@ -241,7 +251,7 @@ impl Chunk {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, VertexAttributeValues::Float32x3(positions));
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, VertexAttributeValues::Float32x3(normals));
 
-        mesh
+        Some(mesh)
     }
 
     pub fn generate_with(&mut self, generator: impl Fn(&ChunkPosition, Vec3) -> Voxel) {

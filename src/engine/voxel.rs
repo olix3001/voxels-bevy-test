@@ -19,6 +19,13 @@ impl Voxel {
             Self::NonEmpty { is_opaque } => *is_opaque,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Empty => true,
+            Self::NonEmpty { .. } => false,
+        }
+    }
 }
 
 impl block_mesh::Voxel for Voxel {

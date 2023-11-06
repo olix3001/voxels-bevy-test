@@ -1,7 +1,9 @@
 use bevy::{prelude::*, pbr::wireframe::{WireframePlugin, WireframeConfig}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}};
+use flycam::prelude::debug::DebugPlugin;
 
 mod flycam;
 pub mod engine;
+mod debug;
 
 fn setup(
     mut commands: Commands, 
@@ -30,7 +32,7 @@ fn main() {
             global: true,
             ..Default::default()
         })
-        .add_plugins((LogDiagnosticsPlugin::default(), FrameTimeDiagnosticsPlugin::default()))
+        .add_plugins(DebugPlugin)
         .add_plugins(flycam::PlayerPlugin)
         .add_plugins(engine::ChunkPlugin)
         .add_systems(Startup, setup)
