@@ -32,6 +32,7 @@ fn main() {
         })
         .add_plugins((LogDiagnosticsPlugin::default(), FrameTimeDiagnosticsPlugin::default()))
         .add_plugins(flycam::PlayerPlugin)
+        .add_plugins(engine::ChunkPlugin)
         .add_systems(Startup, setup)
         .run();
 }
