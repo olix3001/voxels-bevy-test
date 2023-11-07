@@ -1,4 +1,4 @@
-use bevy::prelude::Vec3;
+use bevy::{prelude::Vec3, render::primitives::Frustum, math::Affine3A};
 
 use super::chunk::{ChunkPosition, CHUNK_SIZE};
 
@@ -56,4 +56,15 @@ impl Face {
             Self::Front => Vec3::new(0.5, 0.5, 1.0),
         } * CHUNK_SIZE as f32
     }
+}
+
+pub fn intersects_frustum(chunk: &ChunkPosition, frustum: &Frustum) -> bool {
+    let chunk_aabb = chunk.aabb();
+    
+    frustum.intersects_obb(
+        &chunk_aabb,
+        &Affine3A::IDENTITY,
+        true,
+        false
+    )
 }

@@ -1,8 +1,8 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use bevy::{prelude::*, utils::HashSet, tasks::{Task, AsyncComputeTaskPool, block_on}, core::FrameCount};
+use bevy::{prelude::*, utils::HashSet, tasks::{Task, AsyncComputeTaskPool, block_on}, core::FrameCount, render::primitives::Frustum};
 
-use super::{chunk::{Chunk, ChunkPosition}, voxel::Voxel, ChunkData};
+use super::{chunk::{Chunk, ChunkPosition}, voxel::Voxel, ChunkData, util::intersects_frustum};
 
 #[derive(Resource, Clone)]
 pub struct WorldGeneratorConfig {
@@ -24,8 +24,8 @@ impl WorldGeneratorConfig {
     pub fn default_with(generator: impl WorldGenerator + 'static) -> Self {
         Self {
             generator: Arc::new(generator),
-            render_distance: 32,
-            generation_distance: 34,
+            render_distance: 16,
+            generation_distance: 18,
         }
     }
 }
@@ -133,6 +133,7 @@ pub fn update_visible_chunks(
     chunks_query: Query<(Entity, &Chunk)>,
     generator_state: Res<GeneratorState>,
     unmeshed_chunks_query: Query<Entity, (Without<Handle<Mesh>>, With<Chunk>)>,
+    frustum: Query<&Frustum, With<Camera>>,
 ) {
     if *generator_state == GeneratorState::Paused {
         return;
@@ -157,34 +158,42 @@ pub fn update_visible_chunks(
         already_seen.insert(*neighbor);
     }
 
-    while let Some((chunk_pos, from_face)) = queue.pop_front() {
+    let frustum = frustum.single();
 
+    while let Some((chunk_pos, from_face)) = queue.pop_front() {
         // Get chunk if it exists
-        let current_chunk = chunk_data.loaded.get(&chunk_pos);
+        let current_chunk = chunk_data.loaded.get(&chunk_pos).map(|entity| *entity);
         if current_chunk.is_none() {
             // If chunk does not exist, queue it for generation
             if !chunk_data.awaiting_generation.contains_key(&chunk_pos) {
                 let id = commands.spawn((AwaitingGeneration { chunk_pos },)).id();
                 chunk_data.awaiting_generation.insert(chunk_pos, id);
             }
-            continue;
+            // Exception: If chunk is close enough to the player, treat it as if it is loaded
+            if camera_chunk_position.distance_to(&chunk_pos) > 2.5 {
+                continue;
+            }
         } else {
             // If chunk is loaded, check whether we have meshed it yet
             if chunk_data.meshes.contains_key(&chunk_pos) {
                 // If chunk was not visible before, add mesh we already have
-                if let Ok(entity) = unmeshed_chunks_query.get(*current_chunk.unwrap()) {
+                if let Ok(entity) = unmeshed_chunks_query.get(current_chunk.unwrap()) {
                     let mesh_handle = chunk_data.meshes.get(&chunk_pos);
                     commands.entity(entity).try_insert(mesh_handle.unwrap().clone());
                 }
             }
         }
 
-        let current_chunk = chunks_query.get(*current_chunk.unwrap());
-        if current_chunk.is_err() {
-            continue;
-        }
+        let current_chunk = if current_chunk.is_some() {
+            let current_chunk = chunks_query.get(current_chunk.unwrap());
+            if current_chunk.is_err() {
+                continue;
+            }
 
-        let current_chunk = current_chunk.unwrap();
+            Some(current_chunk.unwrap())
+        } else {
+            None
+        };
 
         // Queue all neighbors
         for (neighbor, face) in chunk_pos.neighbors().iter() {
@@ -200,7 +209,7 @@ pub fn update_visible_chunks(
             }
 
             // Filter 2: Check if we can see the chunk using visibility mask
-            if current_chunk.1.is_face_opaque(*face) {
+            if current_chunk.is_some() && current_chunk.unwrap().1.is_face_opaque(*face) {
                 continue;
             }
 
@@ -209,8 +218,13 @@ pub fn update_visible_chunks(
                 continue;
             }
 
-            // Last filter: Ensure we have not already seen this chunk
+            // Filter 4: Ensure we have not already seen this chunk
             if already_seen.contains(neighbor) {
+                continue;
+            }
+
+            // Filter 5: Check if chunk is in frustum
+            if !intersects_frustum(neighbor, &frustum) {
                 continue;
             }
 
@@ -220,9 +234,9 @@ pub fn update_visible_chunks(
         }
     }
 
-    // Update visible chunks
-    if already_seen.len() <= 5 && chunk_data.visible.len() > 5 {
-        return;
+    // Yup, this number is not arbitrary at all
+    if chunk_data.visible.len() > 7 && already_seen.len() == 7 {
+        return; // TODO: This is a hacky fix, find a better way to do this
     }
     chunk_data.visible = already_seen;
 }
@@ -476,6 +490,7 @@ pub fn show_chunk_generation_debug_info(
     mut world_generator_config: ResMut<WorldGeneratorConfig>,
     mut chunk_generation_series: ResMut<ChunkGenerationStatsDebugTimeseries>,
     time: Res<Time>,
+    camera: Query<&Transform, With<Camera>>,
 ) {
     use bevy_egui::egui;
     egui::Window::new("Chunk Generation").show(&contexts.ctx_mut(), |ui| {
@@ -530,6 +545,9 @@ pub fn show_chunk_generation_debug_info(
                     .name("Meshes")
             );
         });
+
+        ui.label(format!("Player Position: {:?}", camera.single().translation));
+        ui.label(format!("Player forward: {:?}", camera.single().forward()));
 
         ui.separator();
 

@@ -1,6 +1,6 @@
 use std::sync::{RwLock, Arc, RwLockReadGuard, RwLockWriteGuard};
 
-use bevy::{prelude::{Vec3, Component, Mesh}, render::mesh::VertexAttributeValues};
+use bevy::{prelude::{Vec3, Component, Mesh}, render::{mesh::VertexAttributeValues, primitives::Aabb}};
 use block_mesh::{ndshape::ConstShape, GreedyQuadsBuffer, greedy_quads, RIGHT_HANDED_Y_UP_CONFIG};
 
 use super::{voxel::Voxel, util::Face};
@@ -73,6 +73,13 @@ impl ChunkPosition {
         let dy = (self.y - other.y) as f32;
         let dz = (self.z - other.z) as f32;
         (dx * dx + dy * dy + dz * dz).sqrt()
+    }
+
+    pub fn aabb(&self) -> Aabb {
+        Aabb::from_min_max(
+            self.as_world_position(),
+            self.as_world_position() + Vec3::new(CHUNK_SIZE as f32, CHUNK_SIZE as f32, CHUNK_SIZE as f32),
+        )
     }
 }
 
