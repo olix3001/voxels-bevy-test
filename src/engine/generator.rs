@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use bevy::{prelude::*, utils::HashSet, tasks::{Task, AsyncComputeTaskPool, block_on}};
+use bevy::{prelude::*, utils::HashSet, tasks::{Task, AsyncComputeTaskPool, block_on}, core::FrameCount};
 
 use super::{chunk::{Chunk, ChunkPosition}, voxel::Voxel, ChunkData};
 
@@ -109,9 +109,13 @@ impl Plugin for ChunkGeneratorPlugin {
             schedule_chunk_meshing,
             apply_meshes,
         ));
+        
+        app.add_systems(PostUpdate, garbage_collect_chunks);
 
         #[cfg(debug_assertions)]
         app.add_systems(Update, show_chunk_generation_debug_info);
+        #[cfg(debug_assertions)]
+        app.insert_resource(ChunkGenerationStatsDebugTimeseries::new(100));
     }
 }
 
@@ -125,17 +129,18 @@ pub fn update_visible_chunks(
     mut commands: Commands,
     mut chunk_data: ResMut<ChunkData>,
     config: Res<WorldGeneratorConfig>,
-    camera_query: Query<&Transform, With<Camera>>,
+    camera_query: Query<(&Transform, &Projection), With<Camera>>,
     chunks_query: Query<(Entity, &Chunk)>,
     generator_state: Res<GeneratorState>,
+    unmeshed_chunks_query: Query<Entity, (Without<Handle<Mesh>>, With<Chunk>)>,
 ) {
     if *generator_state == GeneratorState::Paused {
         return;
     }
 
     let camera = camera_query.single();
-    let camera_position = camera.translation;
-    let camera_forward = camera.forward();
+    let camera_position = camera.0.translation;
+    let camera_forward = camera.0.forward();
 
     let mut queue = VecDeque::new();
 
@@ -153,6 +158,7 @@ pub fn update_visible_chunks(
     }
 
     while let Some((chunk_pos, from_face)) = queue.pop_front() {
+
         // Get chunk if it exists
         let current_chunk = chunk_data.loaded.get(&chunk_pos);
         if current_chunk.is_none() {
@@ -162,6 +168,15 @@ pub fn update_visible_chunks(
                 chunk_data.awaiting_generation.insert(chunk_pos, id);
             }
             continue;
+        } else {
+            // If chunk is loaded, check whether we have meshed it yet
+            if chunk_data.meshes.contains_key(&chunk_pos) {
+                // If chunk was not visible before, add mesh we already have
+                if let Ok(entity) = unmeshed_chunks_query.get(*current_chunk.unwrap()) {
+                    let mesh_handle = chunk_data.meshes.get(&chunk_pos);
+                    commands.entity(entity).try_insert(mesh_handle.unwrap().clone());
+                }
+            }
         }
 
         let current_chunk = chunks_query.get(*current_chunk.unwrap());
@@ -179,9 +194,10 @@ pub fn update_visible_chunks(
             }
 
             // Filter 1: Check if we are going in the correct direction
-            if face.normal().dot(camera_forward) < -0.75 {
+            let view_vector = (face.face_center_in_chunk(&chunk_pos) - camera_position).normalize();
+            if camera_forward.dot(view_vector) < 0.0 {
                 continue;
-            } 
+            }
 
             // Filter 2: Check if we can see the chunk using visibility mask
             if current_chunk.1.is_face_opaque(*face) {
@@ -280,8 +296,9 @@ pub fn unload_invisible_chunks(
 
     for (entity, chunk) in chunks_query.iter() {
         if !chunk_data.visible.contains(&chunk.position) {
-            commands.entity(entity).despawn();
-            chunk_data.loaded.remove(&chunk.position);
+            // commands.entity(entity).despawn();
+            commands.entity(entity).remove::<Handle<Mesh>>();
+            // chunk_data.loaded.remove(&chunk.position);
             chunk_data.awaiting_generation.remove(&chunk.position);
             // NOTE: This is temporary
             // chunk_data.meshes.remove(&chunk.position);
@@ -318,12 +335,17 @@ pub fn schedule_chunk_meshing(
     mut commands: Commands,
     mut query: Query<(Entity, &Chunk), (Without<Handle<Mesh>>, Without<MeshingTask>, Without<EmptyChunkMarker>)>,
     generator_state: Res<GeneratorState>,
+    chunk_data: Res<ChunkData>,
 ) {
     if *generator_state == GeneratorState::Paused {
         return;
     }
 
     for (entity, chunk) in query.iter_mut() {
+        // If chunk is meshed, skip it
+        if chunk_data.meshes.contains_key(&chunk.position) {
+            continue;
+        }
         let task = MeshingTask::new(chunk);
         commands.entity(entity).try_insert(task);
     } 
@@ -369,20 +391,145 @@ pub fn apply_meshes(
     }
 }
 
+/// Garbage collector :D
+/// Removes chunks and meshes that are too far away or that have other reasons to be removed
+/// This runs every few seconds or if there is enough time left in the frame
+pub fn garbage_collect_chunks(
+    mut commands: Commands,
+    mut chunk_data: ResMut<ChunkData>,
+    chunks_query: Query<(Entity, &Chunk)>,
+    worldgen_config: Res<WorldGeneratorConfig>,
+    time: Res<Time>,
+    frame_count: Res<FrameCount>,
+    camera: Query<&Transform, With<Camera>>,
+) {
+    let is_enough_time_left = time.delta_seconds_f64() < 1.0 / 30.0;
+    let is_time_to_collect = frame_count.0 % 60 == 0; // Should force garbage collection every second (60 frames)
+    let should_force_collect = frame_count.0 % 600 == 0; // Should force garbage collection every 10 seconds (600 frames)
+    if !should_force_collect {
+        if !is_enough_time_left && !is_time_to_collect {
+            return;
+        }
+    }
+
+    let camera_position = camera.single().translation;
+
+    for (entity, chunk) in chunks_query.iter() {
+        if chunk_data.visible.contains(&chunk.position) {
+            continue;
+        }
+        if chunk.position.distance_to(&ChunkPosition::from_world_position(camera_position)) > worldgen_config.generation_distance as f32 {
+            commands.entity(entity).despawn_recursive();
+            chunk_data.forget(chunk.position);
+        }
+    }
+}
+
+/// Debug resource to keep track of chunk generation stats
+#[cfg(debug_assertions)]
+#[derive(Resource)]
+pub struct ChunkGenerationStatsDebugTimeseries {
+    capacity: usize,
+    pub loaded: Vec<[f64; 2]>,
+    pub awaiting_generation: Vec<[f64; 2]>,
+    pub visible: Vec<[f64; 2]>,
+    pub meshes: Vec<[f64; 2]>,
+}
+
+#[cfg(debug_assertions)]
+impl ChunkGenerationStatsDebugTimeseries {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            loaded: Vec::with_capacity(capacity),
+            awaiting_generation: Vec::with_capacity(capacity),
+            visible: Vec::with_capacity(capacity),
+            meshes: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn add(&mut self, timestamp: f64, loaded: f64, awaiting_generation: f64, visible: f64, meshes: f64) {
+        if self.loaded.len() >= self.capacity {
+            self.loaded.remove(0);
+            self.awaiting_generation.remove(0);
+            self.visible.remove(0);
+            self.meshes.remove(0);
+        }
+        self.loaded.push([timestamp, loaded]);
+        self.awaiting_generation.push([timestamp, awaiting_generation]);
+        self.visible.push([timestamp, visible]);
+        self.meshes.push([timestamp, meshes]);
+    }
+
+    pub fn get_series<'a>(&'a self) -> (&'a [[f64; 2]], &'a [[f64; 2]], &'a [[f64; 2]], &'a [[f64; 2]]) {
+        (&self.loaded, &self.awaiting_generation, &self.visible, &self.meshes)
+    }
+}
+
 /// Debug system to give stats on chunk generation
 #[cfg(debug_assertions)]
 pub fn show_chunk_generation_debug_info(
-    chunk_data: Res<ChunkData>,
+    mut chunk_data: ResMut<ChunkData>,
+    mut commands: Commands,
     mut contexts: bevy_egui::EguiContexts,
     mut generator_state: ResMut<GeneratorState>,
     mut world_generator_config: ResMut<WorldGeneratorConfig>,
+    mut chunk_generation_series: ResMut<ChunkGenerationStatsDebugTimeseries>,
+    time: Res<Time>,
 ) {
     use bevy_egui::egui;
     egui::Window::new("Chunk Generation").show(&contexts.ctx_mut(), |ui| {
-        ui.label(format!("Loaded: {}", chunk_data.loaded.len()));
-        ui.label(format!("Awaiting Generation: {}", chunk_data.awaiting_generation.len()));
-        ui.label(format!("Visible: {}", chunk_data.visible.len()));
-        ui.label(format!("Meshes: {}", chunk_data.meshes.len()));
+        // Plot of loaded chunks, awaiting generation chunks, visible chunks, and meshes
+        let loaded_chunks = chunk_data.loaded.len();
+        let awaiting_generation_chunks = chunk_data.awaiting_generation.len();
+        let visible_chunks = chunk_data.visible.len();
+        let meshes = chunk_data.meshes.len();
+
+        let timestamp = time.elapsed_seconds_f64();
+        chunk_generation_series.add(
+            timestamp,
+            loaded_chunks as f64,
+            awaiting_generation_chunks as f64,
+            visible_chunks as f64,
+            meshes as f64
+        );
+
+        let plot = egui_plot::Plot::new("Chunk Generation Stats")
+            .legend(egui_plot::Legend::default()
+                .position(egui_plot::Corner::LeftBottom)
+            )
+            .view_aspect(2.0)
+            .height(200.0)
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .show_axes(true)
+            .show_grid(true)
+            .set_margin_fraction(bevy_egui::egui::Vec2::new(0.05, 0.22));
+
+        plot.show(ui, |plot_ui| {
+            let (loaded, awaiting_generation, visible, meshes) = chunk_generation_series.get_series();
+            plot_ui.line(
+                egui_plot::Line::new(loaded.to_vec())
+                    .color(egui::Color32::from_rgb(0, 255, 0))
+                    .name("Loaded Chunks")
+            );
+            plot_ui.line(
+                egui_plot::Line::new(awaiting_generation.to_vec())
+                    .color(egui::Color32::from_rgb(255, 0, 0))
+                    .name("Awaiting Generation Chunks")
+            );
+            plot_ui.line(
+                egui_plot::Line::new(visible.to_vec())
+                    .color(egui::Color32::from_rgb(0, 0, 255))
+                    .name("Visible Chunks")
+            );
+            plot_ui.line(
+                egui_plot::Line::new(meshes.to_vec())
+                    .color(egui::Color32::from_rgb(255, 255, 0))
+                    .name("Meshes")
+            );
+        });
 
         ui.separator();
 
@@ -393,6 +540,26 @@ pub fn show_chunk_generation_debug_info(
                 GeneratorState::Paused => GeneratorState::Generating,
             };
         }
+
+        ui.separator();
+
+        ui.label("Clear Data");
+        ui.horizontal(|ui| {
+            if ui.button("Meshes").clicked() {
+                for (_, entity) in chunk_data.loaded.iter() {
+                    commands.entity(*entity).remove::<Handle<Mesh>>();
+                }
+                chunk_data.meshes.clear();
+            }
+            if ui.button("All").clicked() {
+                chunk_data.meshes.clear();
+                for (_, entity) in chunk_data.loaded.drain() {
+                    commands.entity(entity).despawn_recursive();
+                }
+                chunk_data.awaiting_generation.clear();
+                chunk_data.visible.clear();
+            }
+        });
 
         ui.separator();
 

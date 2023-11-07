@@ -1,5 +1,7 @@
 use bevy::prelude::Vec3;
 
+use super::chunk::{ChunkPosition, CHUNK_SIZE};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Face {
     Left,
@@ -42,5 +44,16 @@ impl Face {
             Self::Back => Vec3::new(0.0, 0.0, -1.0),
             Self::Front => Vec3::new(0.0, 0.0, 1.0),
         }
+    }
+
+    pub fn face_center_in_chunk(&self, chunk: &ChunkPosition) -> Vec3 {
+        chunk.as_world_position() + match self {
+            Self::Left => Vec3::new(0.0, 0.5, 0.5),
+            Self::Right => Vec3::new(1.0, 0.5, 0.5),
+            Self::Bottom => Vec3::new(0.5, 0.0, 0.5),
+            Self::Top => Vec3::new(0.5, 1.0, 0.5),
+            Self::Back => Vec3::new(0.5, 0.5, 0.0),
+            Self::Front => Vec3::new(0.5, 0.5, 1.0),
+        } * CHUNK_SIZE as f32
     }
 }

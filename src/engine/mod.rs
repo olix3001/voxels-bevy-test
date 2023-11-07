@@ -30,6 +30,14 @@ impl Default for ChunkData {
     }
 }
 
+impl ChunkData {
+    pub fn forget(&mut self, chunk: ChunkPosition) {
+        self.meshes.remove(&chunk);
+        self.loaded.remove(&chunk);
+        self.awaiting_generation.remove(&chunk);
+    } 
+}
+
 pub struct ChunkPlugin;
 
 impl Plugin for ChunkPlugin {
