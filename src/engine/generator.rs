@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use bevy::{prelude::*, utils::HashSet, tasks::{Task, AsyncComputeTaskPool, block_on}, core::FrameCount, render::primitives::Frustum};
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 
 use super::{chunk::{Chunk, ChunkPosition}, voxel::Voxel, ChunkData, util::intersects_frustum};
 
@@ -489,6 +490,7 @@ pub fn show_chunk_generation_debug_info(
     mut generator_state: ResMut<GeneratorState>,
     mut world_generator_config: ResMut<WorldGeneratorConfig>,
     mut chunk_generation_series: ResMut<ChunkGenerationStatsDebugTimeseries>,
+    diagnostics: Res<DiagnosticsStore>,
     time: Res<Time>,
     camera: Query<&Transform, With<Camera>>,
 ) {
@@ -545,6 +547,14 @@ pub fn show_chunk_generation_debug_info(
                     .name("Meshes")
             );
         });
+        ui.label(format!(
+            "Average FPS: {:.02}",
+            diagnostics
+                .get(FrameTimeDiagnosticsPlugin::FPS)
+                .unwrap()
+                .average()
+                .unwrap_or_default()
+        ));
 
         ui.label(format!("Player Position: {:?}", camera.single().translation));
         ui.label(format!("Player forward: {:?}", camera.single().forward()));
